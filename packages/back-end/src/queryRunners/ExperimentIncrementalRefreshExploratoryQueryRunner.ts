@@ -3,6 +3,10 @@ import {
   isFactMetric,
   isRatioMetric,
 } from "shared/experiments";
+import {
+  collectAnalysisFailures,
+  snapshotStatusFromAnalyses,
+} from "shared/util";
 import { Dimension } from "shared/types/integrations";
 import { FactMetricInterface } from "shared/types/fact-table";
 import {
@@ -486,7 +490,9 @@ export class ExperimentIncrementalRefreshExploratoryQueryRunner extends QueryRun
       if (!analysis) return;
 
       analysis.results = results.dimensions || [];
-      analysis.status = "success";
+      analysis.status = collectAnalysisFailures(analysis)
+        ? "partial"
+        : "success";
       analysis.error = "";
 
       // TODO: do this once, not per analysis
@@ -560,7 +566,7 @@ export class ExperimentIncrementalRefreshExploratoryQueryRunner extends QueryRun
           ? "running"
           : status === "failed"
             ? "error"
-            : "success",
+            : snapshotStatusFromAnalyses(this.model.analyses),
     };
     await updateSnapshot({
       context: this.context,

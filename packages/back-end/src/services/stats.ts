@@ -7,7 +7,11 @@ import {
   EXPOSURE_DATE_DIMENSION_NAME,
 } from "shared/constants";
 
-import { parseEnvInt, putBaselineVariationFirst } from "shared/util";
+import {
+  collectAnalysisFailures,
+  parseEnvInt,
+  putBaselineVariationFirst,
+} from "shared/util";
 import {
   ExperimentMetricInterface,
   eligibleForUncappedMetric,
@@ -729,7 +733,9 @@ export async function writeSnapshotAnalyses(
         });
 
       analysisObj.results = experimentReportResults[0]?.dimensions || [];
-      analysisObj.status = "success";
+      analysisObj.status = collectAnalysisFailures(analysisObj)
+        ? "partial"
+        : "success";
       analysisObj.error = undefined;
     }
 

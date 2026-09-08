@@ -6,6 +6,7 @@ import {
 import {
   findAnalysisComputeFailure,
   getSafeRolloutSnapshotAnalysis,
+  snapshotHasResults,
 } from "shared/util";
 import { updateSafeRolloutTimeSeries } from "back-end/src/services/safeRolloutTimeSeries";
 import {
@@ -79,7 +80,9 @@ export class SafeRolloutSnapshotModel extends BaseClass {
       {
         ...query,
         status: {
-          $in: withResults ? ["success"] : ["success", "running", "error"],
+          $in: withResults
+            ? ["success", "partial-success"]
+            : ["success", "partial-success", "running", "error"],
         },
         ...(beforeSnapshot
           ? { dateCreated: { $lt: beforeSnapshot.dateCreated } }
@@ -111,9 +114,10 @@ export class SafeRolloutSnapshotModel extends BaseClass {
       latestSafeRolloutSnapshot === null ||
       latestSafeRolloutSnapshot?.id === updatedDoc.id;
 
+    // Safe rollouts still suppress the entire summary after a compute failure.
     if (
       isLatestSnapshot &&
-      updatedDoc.status === "success" &&
+      snapshotHasResults(updatedDoc.status) &&
       findAnalysisComputeFailure(getSafeRolloutSnapshotAnalysis(updatedDoc)) ===
         null
     ) {

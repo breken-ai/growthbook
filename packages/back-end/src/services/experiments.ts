@@ -20,6 +20,7 @@ import {
 import { getScopedSettings, ScopedSettings } from "shared/settings";
 import {
   autoMerge,
+  collectAnalysisFailures,
   draftHasChangesOutsideTargetRef,
   DRAFT_REVISION_STATUSES,
   findAnalysisComputeFailure,
@@ -2842,7 +2843,7 @@ export async function createSnapshotAnalysis(
     metricMap: metricMap,
   });
   analysis.results = results[0]?.dimensions || [];
-  analysis.status = "success";
+  analysis.status = collectAnalysisFailures(analysis) ? "partial" : "success";
   analysis.error = undefined;
 
   await updateSnapshotAnalysis({
@@ -2911,12 +2912,19 @@ export async function createSnapshotAnalysesBatched(
       metricMap,
     });
 
-    completedAnalyses = analyses.map((analysis, i) => ({
-      ...analysis,
-      results: results[i]?.dimensions ?? [],
-      status: "success" as const,
-      error: undefined,
-    }));
+    completedAnalyses = analyses.map((analysis, i) => {
+      const withResults = {
+        ...analysis,
+        results: results[i]?.dimensions ?? [],
+        error: undefined,
+      };
+      return {
+        ...withResults,
+        status: collectAnalysisFailures(withResults)
+          ? ("partial" as const)
+          : ("success" as const),
+      };
+    });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     completedAnalyses = analyses.map((analysis) => ({
