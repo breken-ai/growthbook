@@ -24,12 +24,14 @@ export async function toEnhancedExperimentApiResponse(
     context,
     experiment,
   );
+  const metricGroups = await context.models.metricGroups.getAll();
 
   const { status, detailedStatus } = getStatusIndicatorData(
     experiment,
     false,
     healthSettings,
     decisionCriteria,
+    metricGroups,
   );
   const enhancedStatus = { status, detailedStatus };
 

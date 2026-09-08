@@ -719,11 +719,13 @@ export const notifyScheduledEndDecision = async ({
     experiment.decisionFrameworkSettings?.decisionCriteriaId ??
       context.org.settings?.defaultDecisionCriteriaId,
   );
+  const metricGroups = await context.models.metricGroups.getAll();
 
   const currentStatus = getExperimentResultStatus({
     experimentData: experiment,
     healthSettings,
     decisionCriteria,
+    metricGroups,
   });
   if (!currentStatus) return false;
 
@@ -731,6 +733,7 @@ export const notifyScheduledEndDecision = async ({
     experimentData: { ...experiment, statusUpdateSchedule: null },
     healthSettings,
     decisionCriteria,
+    metricGroups,
   });
 
   return notifyDecision({
@@ -771,11 +774,13 @@ export const notifyExperimentChange = async ({
     experiment.decisionFrameworkSettings?.decisionCriteriaId ??
       context.org.settings?.defaultDecisionCriteriaId,
   );
+  const metricGroups = await context.models.metricGroups.getAll();
 
   const currentStatus = getExperimentResultStatus({
     experimentData: experiment,
     healthSettings,
     decisionCriteria,
+    metricGroups,
   });
 
   const triggeredNoData = await notifyNoData({
@@ -827,6 +832,7 @@ export const notifyExperimentChange = async ({
       },
       healthSettings,
       decisionCriteria,
+      metricGroups,
     });
     const triggeredDecision = await notifyDecision({
       context,

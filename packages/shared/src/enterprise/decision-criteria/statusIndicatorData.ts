@@ -5,7 +5,10 @@ import {
   ExperimentResultStatusData,
   ExperimentDataForStatus,
 } from "shared/types/experiment";
+import { MetricGroupInterface } from "shared/types/metric-groups";
 import { getExperimentResultStatus } from "./decisionCriteria";
+
+export type MetricNameResolver = (metricId: string) => string;
 
 export type StatusIndicatorData = {
   color: "amber" | "green" | "red" | "gold" | "indigo" | "gray" | "pink";
@@ -22,6 +25,8 @@ export function getStatusIndicatorData(
   skipArchived: boolean,
   healthSettings: ExperimentHealthSettings,
   decisionCriteria: DecisionCriteriaData,
+  metricGroups: MetricGroupInterface[] = [],
+  resolveMetricName?: MetricNameResolver,
 ): StatusIndicatorData {
   if (!skipArchived && experimentData.archived) {
     return {
@@ -51,9 +56,13 @@ export function getStatusIndicatorData(
       experimentData,
       healthSettings,
       decisionCriteria,
+      metricGroups,
     });
     if (runningStatusData) {
-      return getDetailedRunningStatusIndicatorData(runningStatusData);
+      return getDetailedRunningStatusIndicatorData(
+        runningStatusData,
+        resolveMetricName,
+      );
     }
 
     // 6. Otherwise, show running status
@@ -121,6 +130,7 @@ export function getStatusIndicatorData(
 
 function getDetailedRunningStatusIndicatorData(
   decisionData: ExperimentResultStatusData,
+  resolveMetricName?: MetricNameResolver,
 ): StatusIndicatorData {
   switch (decisionData.status) {
     case "rollback-now":
@@ -168,6 +178,24 @@ function getDetailedRunningStatusIndicatorData(
         needsAttention: true,
         sortOrder: 10,
       };
+    case "data-incomplete": {
+      const failedNames = decisionData.failedMetrics.map(
+        (id) => resolveMetricName?.(id) ?? id,
+      );
+      const tooltip = failedNames.length
+        ? `${failedNames.join(
+            ", ",
+          )} could not be computed, so ship and review recommendations are paused. Roll back recommendations still apply.`
+        : "Some metrics could not be computed, so ship and review recommendations are paused. Roll back recommendations still apply.";
+      return {
+        color: "amber",
+        status: "Running",
+        detailedStatus: "Data incomplete",
+        tooltip,
+        needsAttention: true,
+        sortOrder: 9.5,
+      };
+    }
     case "unhealthy":
       return {
         color: "amber",

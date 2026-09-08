@@ -2,6 +2,7 @@ import {
   ExperimentAnalysisSummaryResultsStatus,
   ExperimentAnalysisSummaryVariationStatus,
   DecisionCriteriaRule,
+  DecisionCriteriaData,
   ExperimentResultStatusData,
   ExperimentDataForStatus,
   ExperimentHealthSettings,
@@ -15,6 +16,7 @@ import {
   getExperimentResultStatus,
 } from "../src/enterprise/decision-criteria/decisionCriteria";
 import { PRESET_DECISION_CRITERIA } from "../src/enterprise/decision-criteria/constants";
+import { MetricGroupInterface } from "../types/metric-groups";
 
 function shipNow(variationIds: string[]): ExperimentResultStatusData {
   return {
@@ -648,12 +650,12 @@ describe("evaluateDecisionRuleOnVariation", () => {
           direction: "statsigWinner" as const,
         },
         {
-          metrics: "guardrails" as const,
-          match: "none" as const,
-          direction: "statsigLoser" as const,
+          metrics: "guardrails",
+          match: "none",
+          direction: "statsigLoser",
         },
       ],
-      action: "ship" as const,
+      action: "ship",
     };
 
     // All conditions met - should match
@@ -1313,6 +1315,381 @@ describe("resolveScheduledShipDecision", () => {
   });
 });
 
+describe("compute-failed metrics are indeterminate, not false", () => {
+  const baseVariationStatus: ExperimentAnalysisSummaryVariationStatus = {
+    variationId: "1",
+    goalMetrics: {},
+    guardrailMetrics: {},
+  };
+
+  it("returns 'indeterminate' for a match:'none' ship guardrail when a guardrail failed", () => {
+    const rule: DecisionCriteriaRule = {
+      conditions: [
+        {
+          metrics: "guardrails" as const,
+          match: "none" as const,
+          direction: "statsigLoser" as const,
+        },
+      ],
+      action: "ship" as const,
+    };
+
+    const result = evaluateDecisionRuleOnVariation({
+      rule,
+      variationStatus: {
+        ...baseVariationStatus,
+        guardrailMetrics: {
+          guardrail1: { status: "safe" },
+          guardrail2: { status: "failed" },
+        },
+      },
+      goalMetrics: [],
+      guardrailMetrics: ["guardrail1", "guardrail2"],
+      requireSuperStatSig: false,
+    });
+    expect(result).toEqual("indeterminate");
+  });
+
+  it("returns the action for a match:'any' ship with a surviving winner despite another failing", () => {
+    const rule: DecisionCriteriaRule = {
+      conditions: [
+        {
+          metrics: "goals",
+          match: "any",
+          direction: "statsigWinner",
+        },
+      ],
+      action: "ship",
+    };
+
+    const result = evaluateDecisionRuleOnVariation({
+      rule,
+      variationStatus: {
+        ...baseVariationStatus,
+        goalMetrics: {
+          metric1: { status: "won", superStatSigStatus: "won" },
+          metric2: { status: "failed", superStatSigStatus: "failed" },
+        },
+      },
+      goalMetrics: ["metric1", "metric2"],
+      guardrailMetrics: [],
+      requireSuperStatSig: false,
+    });
+    expect(result).toEqual("ship");
+  });
+
+  it("returns undefined for a match:'all' ship with a surviving loser despite a failed metric", () => {
+    const rule: DecisionCriteriaRule = {
+      conditions: [
+        {
+          metrics: "goals",
+          match: "all",
+          direction: "statsigWinner",
+        },
+      ],
+      action: "ship",
+    };
+
+    const result = evaluateDecisionRuleOnVariation({
+      rule,
+      variationStatus: {
+        ...baseVariationStatus,
+        goalMetrics: {
+          metric1: { status: "lost", superStatSigStatus: "lost" },
+          metric2: { status: "failed", superStatSigStatus: "failed" },
+        },
+      },
+      goalMetrics: ["metric1", "metric2"],
+      guardrailMetrics: [],
+      requireSuperStatSig: false,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("rollback rule still fires on a surviving losing guardrail while another failed", () => {
+    const rule: DecisionCriteriaRule = {
+      conditions: [
+        {
+          metrics: "guardrails",
+          match: "any",
+          direction: "statsigLoser",
+        },
+      ],
+      action: "rollback",
+    };
+
+    const result = evaluateDecisionRuleOnVariation({
+      rule,
+      variationStatus: {
+        ...baseVariationStatus,
+        guardrailMetrics: {
+          guardrail1: { status: "lost" },
+          guardrail2: { status: "failed" },
+        },
+      },
+      goalMetrics: [],
+      guardrailMetrics: ["guardrail1", "guardrail2"],
+      requireSuperStatSig: false,
+    });
+    expect(result).toEqual("rollback");
+  });
+
+  it("rollback rule is indeterminate, not a no-match, when every guardrail failed", () => {
+    const rule: DecisionCriteriaRule = {
+      conditions: [
+        {
+          metrics: "guardrails",
+          match: "any",
+          direction: "statsigLoser",
+        },
+      ],
+      action: "rollback",
+    };
+
+    const result = evaluateDecisionRuleOnVariation({
+      rule,
+      variationStatus: {
+        ...baseVariationStatus,
+        guardrailMetrics: {
+          guardrail1: { status: "failed" },
+          guardrail2: { status: "failed" },
+        },
+      },
+      goalMetrics: [],
+      guardrailMetrics: ["guardrail1", "guardrail2"],
+      requireSuperStatSig: false,
+    });
+    expect(result).toEqual("indeterminate");
+  });
+
+  it("rollback match:'all' is indeterminate, not a vacuous match, when every guardrail failed", () => {
+    const rule: DecisionCriteriaRule = {
+      conditions: [
+        {
+          metrics: "guardrails",
+          match: "all",
+          direction: "statsigLoser",
+        },
+      ],
+      action: "rollback",
+    };
+
+    const result = evaluateDecisionRuleOnVariation({
+      rule,
+      variationStatus: {
+        ...baseVariationStatus,
+        guardrailMetrics: {
+          guardrail1: { status: "failed" },
+          guardrail2: { status: "failed" },
+        },
+      },
+      goalMetrics: [],
+      guardrailMetrics: ["guardrail1", "guardrail2"],
+      requireSuperStatSig: false,
+    });
+    expect(result).toEqual("indeterminate");
+  });
+
+  it("getDecisionFrameworkStatus yields data-incomplete when a ship goal metric failed", () => {
+    const resultsStatus: ExperimentAnalysisSummaryResultsStatus = {
+      variations: [
+        {
+          variationId: "1",
+          goalMetrics: {
+            metric1: { status: "failed", superStatSigStatus: "failed" },
+          },
+          guardrailMetrics: {},
+        },
+      ],
+      settings: { sequentialTesting: false },
+    };
+
+    const decision = getDecisionFrameworkStatus({
+      resultsStatus,
+      decisionCriteria: PRESET_DECISION_CRITERIA,
+      goalMetrics: ["metric1"],
+      guardrailMetrics: [],
+      daysNeeded: 0,
+    });
+
+    expect(decision).toEqual({
+      status: "data-incomplete",
+      failedMetrics: ["metric1"],
+    });
+  });
+
+  it("getDecisionFrameworkStatus still rolls back on a surviving losing guardrail while another failed", () => {
+    const resultsStatus: ExperimentAnalysisSummaryResultsStatus = {
+      variations: [
+        {
+          variationId: "1",
+          goalMetrics: {},
+          guardrailMetrics: {
+            guardrail1: { status: "lost" },
+            guardrail2: { status: "failed" },
+          },
+        },
+      ],
+      settings: { sequentialTesting: false },
+    };
+
+    const decision = getDecisionFrameworkStatus({
+      resultsStatus,
+      decisionCriteria: PRESET_DECISION_CRITERIA,
+      goalMetrics: [],
+      guardrailMetrics: ["guardrail1", "guardrail2"],
+      daysNeeded: 0,
+    });
+
+    expect(decision).toEqual({
+      status: "rollback-now",
+      variations: [
+        { variationId: "1", decidingRule: PRESET_DECISION_CRITERIA.rules[1] },
+      ],
+      sequentialUsed: false,
+      powerReached: true,
+      scheduledEndPassed: false,
+      tooltip: "The test variation(s) should be rolled back.",
+    });
+  });
+
+  it("does not fire a lower-precedence rollback when an indeterminate rule sits above a definitive ship/review", () => {
+    const criteria: DecisionCriteriaData = {
+      id: "gbdeccrit_ship_review_rollback",
+      name: "ship-review-rollback",
+      description: "",
+      rules: [
+        {
+          conditions: [
+            { metrics: "goals", match: "all", direction: "statsigWinner" },
+          ],
+          action: "ship",
+        },
+        {
+          conditions: [
+            { metrics: "goals", match: "any", direction: "statsigWinner" },
+          ],
+          action: "review",
+        },
+        {
+          conditions: [
+            { metrics: "guardrails", match: "any", direction: "statsigLoser" },
+          ],
+          action: "rollback",
+        },
+      ],
+      defaultAction: "review",
+    };
+
+    const resultsStatus: ExperimentAnalysisSummaryResultsStatus = {
+      variations: [
+        {
+          variationId: "1",
+          goalMetrics: {
+            goalA: { status: "won", superStatSigStatus: "won" },
+            goalB: { status: "failed", superStatSigStatus: "failed" },
+          },
+          guardrailMetrics: { guardrail1: { status: "lost" } },
+        },
+      ],
+      settings: { sequentialTesting: false },
+    };
+
+    const decision = getDecisionFrameworkStatus({
+      resultsStatus,
+      decisionCriteria: criteria,
+      goalMetrics: ["goalA", "goalB"],
+      guardrailMetrics: ["guardrail1"],
+      daysNeeded: 0,
+    });
+
+    expect(decision).toEqual({
+      status: "data-incomplete",
+      failedMetrics: ["goalB"],
+    });
+  });
+
+  it("withholds a lower ship rule when a higher rollback rule's only guardrail failed", () => {
+    const criteria: DecisionCriteriaData = {
+      id: "gbdeccrit_rollback_then_ship",
+      name: "rollback-then-ship",
+      description: "",
+      rules: [
+        {
+          conditions: [
+            { metrics: "guardrails", match: "any", direction: "statsigLoser" },
+          ],
+          action: "rollback",
+        },
+        {
+          conditions: [
+            { metrics: "goals", match: "all", direction: "statsigWinner" },
+          ],
+          action: "ship",
+        },
+      ],
+      defaultAction: "review",
+    };
+
+    const resultsStatus: ExperimentAnalysisSummaryResultsStatus = {
+      variations: [
+        {
+          variationId: "1",
+          goalMetrics: {
+            goalA: { status: "won", superStatSigStatus: "won" },
+          },
+          guardrailMetrics: { guardrail1: { status: "failed" } },
+        },
+      ],
+      settings: { sequentialTesting: false },
+    };
+
+    const decision = getDecisionFrameworkStatus({
+      resultsStatus,
+      decisionCriteria: criteria,
+      goalMetrics: ["goalA"],
+      guardrailMetrics: ["guardrail1"],
+      daysNeeded: 0,
+    });
+
+    expect(decision).toEqual({
+      status: "data-incomplete",
+      failedMetrics: ["guardrail1"],
+    });
+  });
+
+  it("expands metric groups so a failed group member is seen", () => {
+    const resultsStatus: ExperimentAnalysisSummaryResultsStatus = {
+      variations: [
+        {
+          variationId: "1",
+          goalMetrics: {
+            metric1: { status: "failed", superStatSigStatus: "failed" },
+          },
+          guardrailMetrics: {},
+        },
+      ],
+      settings: { sequentialTesting: false },
+    };
+
+    const decision = getDecisionFrameworkStatus({
+      resultsStatus,
+      decisionCriteria: PRESET_DECISION_CRITERIA,
+      goalMetrics: ["mg_1"],
+      guardrailMetrics: [],
+      metricGroups: [
+        { id: "mg_1", metrics: ["metric1"] } as MetricGroupInterface,
+      ],
+      daysNeeded: 0,
+    });
+
+    expect(decision).toEqual({
+      status: "data-incomplete",
+      failedMetrics: ["metric1"],
+    });
+  });
+});
+
 describe("getExperimentResultStatus schedule-driven states", () => {
   const baseHealthSettings: ExperimentHealthSettings = {
     decisionFrameworkEnabled: true,
@@ -1488,5 +1865,58 @@ describe("getExperimentResultStatus schedule-driven states", () => {
 
     expect(result).toMatchObject({ status: "days-left", daysLeft: 3 });
     expect(result?.tooltip).toContain("scheduled to end in about 3 days");
+  });
+
+  const incompleteAnalysisSummary: ExperimentDataForStatus["analysisSummary"] =
+    {
+      snapshotId: "snap-1",
+      health: {
+        srm: 0.5,
+        multipleExposures: 0,
+        totalUsers: 1000,
+        power: {
+          type: "success",
+          isLowPowered: false,
+          additionalDaysNeeded: 0,
+        },
+      },
+      resultsStatus: {
+        variations: [
+          {
+            variationId: "1",
+            goalMetrics: {
+              "metric-1": { status: "failed", superStatSigStatus: "failed" },
+            },
+            guardrailMetrics: {},
+          },
+        ],
+        settings: { sequentialTesting: false },
+      },
+    };
+
+  it("withholds data-incomplete while the experiment is before its minimum duration", () => {
+    const result = getExperimentResultStatus({
+      experimentData: makeExperimentData({
+        dateStarted: daysAgo(2),
+        analysisSummary: incompleteAnalysisSummary,
+      }),
+      healthSettings: baseHealthSettings,
+      decisionCriteria: PRESET_DECISION_CRITERIA,
+    });
+
+    expect(result?.status).toBe("before-min-duration");
+  });
+
+  it("surfaces data-incomplete once the experiment is past its minimum duration", () => {
+    const result = getExperimentResultStatus({
+      experimentData: makeExperimentData({
+        dateStarted: daysAgo(30),
+        analysisSummary: incompleteAnalysisSummary,
+      }),
+      healthSettings: baseHealthSettings,
+      decisionCriteria: PRESET_DECISION_CRITERIA,
+    });
+
+    expect(result?.status).toBe("data-incomplete");
   });
 });

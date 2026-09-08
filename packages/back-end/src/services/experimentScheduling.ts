@@ -103,10 +103,13 @@ async function computeScheduledVerdict(
   const resultsStatus = experiment.analysisSummary?.resultsStatus;
   if (!experiment.goalMetrics.length || !resultsStatus) return inconclusive;
 
+  const metricGroups = await context.models.metricGroups.getAll();
+
   const overallStatus = getExperimentResultStatus({
     experimentData: experiment,
     healthSettings: getHealthSettings(context.org.settings, true),
     decisionCriteria,
+    metricGroups,
   });
   if (
     overallStatus?.status === "unhealthy" &&
@@ -124,6 +127,7 @@ async function computeScheduledVerdict(
     decisionCriteria,
     goalMetrics: experiment.goalMetrics,
     guardrailMetrics: experiment.guardrailMetrics,
+    metricGroups,
     scheduledEndPassed: true,
   });
   if (!resultStatus) return inconclusive;
